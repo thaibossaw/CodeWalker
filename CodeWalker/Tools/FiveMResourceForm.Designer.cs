@@ -44,7 +44,6 @@ namespace CodeWalker.Tools
             this.SelectedItemsListBox.FormattingEnabled = true;
             this.SelectedItemsListBox.Location = new System.Drawing.Point(12, 12);
             this.SelectedItemsListBox.Name = "SelectedItemsListBox";
-            this.SelectedItemsListBox.SelectionMode = System.Windows.Forms.SelectionMode.MultiSimple;
             this.SelectedItemsListBox.Size = new System.Drawing.Size(460, 160);
             this.SelectedItemsListBox.TabIndex = 0;
             // 

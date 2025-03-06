@@ -4165,29 +4165,7 @@ namespace CodeWalker
 
         private void ToolsFiveMResourceMenu_Click(object sender, EventArgs e)
         {
-            if (MainListView.SelectedIndices.Count == 0)
-            {
-                MessageBox.Show("Please select at least one model.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            var selectedItems = new List<RpfEntry>();
-            foreach (int index in MainListView.SelectedIndices)
-            {
-                var item = MainListView.Items[index];
-                if (item.Tag is RpfEntry entry)
-                {
-                    selectedItems.Add(entry);
-                }
-            }
-
-            if (selectedItems.Count == 0)
-            {
-                MessageBox.Show("No valid models selected.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            using (var form = new FiveMResourceForm(GetFileCache().RpfMan, selectedItems))
+            using (var form = new ModelSearchForm(GetFileCache().RpfMan))
             {
                 form.ShowDialog();
             }

@@ -32,8 +32,7 @@ namespace CodeWalker.Tools
         private void ResourceNameTextBox_TextChanged(object sender, EventArgs e)
         {
             CreateResourceButton.Enabled = !string.IsNullOrWhiteSpace(ResourceNameTextBox.Text) &&
-                                         !string.IsNullOrWhiteSpace(OutputDirectoryTextBox.Text) &&
-                                         SelectedItemsListBox.SelectedItems.Count > 0;
+                                         !string.IsNullOrWhiteSpace(OutputDirectoryTextBox.Text);
         }
 
         private void OutputDirectoryButton_Click(object sender, EventArgs e)
@@ -62,15 +61,11 @@ namespace CodeWalker.Tools
                 return;
             }
 
-            if (SelectedItemsListBox.SelectedItems.Count == 0)
-            {
-                MessageBox.Show("Please select at least one model.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
             try
             {
                 CreateFiveMResource();
+                DialogResult = DialogResult.OK;
+                Close();
             }
             catch (Exception ex)
             {

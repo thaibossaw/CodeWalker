@@ -501,5 +501,47 @@ namespace CodeWalker.GameFiles
             }
         }
 
+        public List<RpfEntry> FindFiles(string searchText, string extension)
+        {
+            var results = new List<RpfEntry>();
+            var searchLower = searchText.ToLowerInvariant();
+            var extensionLower = extension.ToLowerInvariant();
+
+            // Search through all RPF files including nested ones
+            foreach (var rpf in AllRpfs)
+            {
+                SearchRpfFile(rpf, searchLower, extensionLower, results);
+            }
+
+            return results;
+        }
+
+        private void SearchRpfFile(RpfFile rpf, string searchLower, string extensionLower, List<RpfEntry> results)
+        {
+            if (rpf.AllEntries == null) return;
+
+            // Search through current RPF's entries
+            foreach (var entry in rpf.AllEntries)
+            {
+                if (entry is RpfFileEntry fileEntry)
+                {
+                    if (fileEntry.NameLower.EndsWith(extensionLower, StringComparison.OrdinalIgnoreCase) && 
+                        fileEntry.NameLower.Contains(searchLower))
+                    {
+                        results.Add(entry);
+                    }
+                }
+            }
+
+            // Search through nested RPF files
+            if (rpf.Children != null)
+            {
+                foreach (var childRpf in rpf.Children)
+                {
+                    SearchRpfFile(childRpf, searchLower, extensionLower, results);
+                }
+            }
+        }
+
     }
 }
