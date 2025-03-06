@@ -73,6 +73,7 @@
             this.ToolsRpfBrowserMenu = new System.Windows.Forms.ToolStripMenuItem();
             this.ToolsJenkGenMenu = new System.Windows.Forms.ToolStripMenuItem();
             this.ToolsJenkIndMenu = new System.Windows.Forms.ToolStripMenuItem();
+            this.ToolsFiveMResourceMenu = new System.Windows.Forms.ToolStripMenuItem();
             this.OptionsMenu = new System.Windows.Forms.ToolStripMenuItem();
             this.OptionsStartInEditModeMenu = new System.Windows.Forms.ToolStripMenuItem();
             this.OptionsStartInFolderMenu = new System.Windows.Forms.ToolStripMenuItem();
@@ -498,9 +499,10 @@
             // ToolsMenu
             // 
             this.ToolsMenu.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.ToolsRpfBrowserMenu,
+            this.ToolsFiveMResourceMenu,
             this.ToolsBinSearchMenu,
             this.ToolsAudioExplorerMenu,
-            this.ToolsRpfBrowserMenu,
             this.ToolsJenkGenMenu,
             this.ToolsJenkIndMenu});
             this.ToolsMenu.Name = "ToolsMenu";
@@ -525,7 +527,7 @@
             // 
             this.ToolsRpfBrowserMenu.Name = "ToolsRpfBrowserMenu";
             this.ToolsRpfBrowserMenu.Size = new System.Drawing.Size(180, 22);
-            this.ToolsRpfBrowserMenu.Text = "Old RPF Browser";
+            this.ToolsRpfBrowserMenu.Text = "RPF Browser...";
             this.ToolsRpfBrowserMenu.Click += new System.EventHandler(this.ToolsRpfBrowserMenu_Click);
             // 
             // ToolsJenkGenMenu
@@ -541,6 +543,13 @@
             this.ToolsJenkIndMenu.Size = new System.Drawing.Size(180, 22);
             this.ToolsJenkIndMenu.Text = "JenkInd";
             this.ToolsJenkIndMenu.Click += new System.EventHandler(this.ToolsJenkIndMenu_Click);
+            // 
+            // ToolsFiveMResourceMenu
+            // 
+            this.ToolsFiveMResourceMenu.Name = "ToolsFiveMResourceMenu";
+            this.ToolsFiveMResourceMenu.Size = new System.Drawing.Size(180, 22);
+            this.ToolsFiveMResourceMenu.Text = "Create FiveM Resource";
+            this.ToolsFiveMResourceMenu.Click += new System.EventHandler(this.ToolsFiveMResourceMenu_Click);
             // 
             // OptionsMenu
             // 
@@ -1494,5 +1503,6 @@
         private System.Windows.Forms.ToolStripMenuItem ToolsAudioExplorerMenu;
         private System.Windows.Forms.ToolStripMenuItem FileConfigureGameMenu;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparator14;
+        private System.Windows.Forms.ToolStripMenuItem ToolsFiveMResourceMenu;
     }
 }
