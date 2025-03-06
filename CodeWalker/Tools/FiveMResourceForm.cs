@@ -144,18 +144,36 @@ namespace CodeWalker.Tools
                 if (ydrFile?.Drawable != null)
                 {
                     string baseName = Path.GetFileNameWithoutExtension(item.Path).ToLowerInvariant();
+                    
+                    // Track all discovered texture names to search for their YTD files
+                    var discoveredTextureNames = new HashSet<string>();
+
+                    // Add the base name as a potential texture name
+                    discoveredTextureNames.Add(baseName);
 
                     // Extract embedded textures if any
                     if (ydrFile.Drawable.ShaderGroup?.TextureDictionary != null)
                     {
-                        SafeExtractTextureDictionary(ydrFile.Drawable.ShaderGroup.TextureDictionary, streamDir, processedTextures);
+                        SafeExtractTextureDictionary(ydrFile.Drawable.ShaderGroup.TextureDictionary, streamDir, processedTextures, discoveredTextureNames);
                     }
 
                     // Extract shader-referenced textures
                     if (ydrFile.Drawable.ShaderGroup != null)
                     {
-                        SafeExtractShaderTextures(ydrFile.Drawable.ShaderGroup, streamDir, processedTextures);
+                        SafeExtractShaderTextures(ydrFile.Drawable.ShaderGroup, streamDir, processedTextures, discoveredTextureNames);
                     }
+
+                    // Add name variations for textures
+                    AddTextureNameVariations(baseName, discoveredTextureNames);
+
+                    // Find and extract YTD files for all discovered texture names
+                    foreach (var textureName in discoveredTextureNames)
+                    {
+                        ExtractYtdForModel(textureName, streamDir);
+                    }
+
+                    // Extract all shared texture dictionaries
+                    ExtractSharedTextureDictionaries(streamDir);
 
                     // Find and extract all related YTYPs (they might be in shared files)
                     var allYtyps = FindAllRpfEntries(".ytyp");
@@ -168,7 +186,12 @@ namespace CodeWalker.Tools
                             {
                                 foreach (var archetype in ytypFile.AllArchetypes)
                                 {
-                                    if (archetype.Name.ToString().Equals(baseName, StringComparison.OrdinalIgnoreCase))
+                                    string archetypeName = archetype.Name.ToString().ToLowerInvariant();
+                                    if (archetypeName.Equals(baseName, StringComparison.OrdinalIgnoreCase) ||
+                                        archetypeName.Contains("_" + baseName) ||
+                                        baseName.Contains(archetypeName) ||
+                                        // Also check if archetype name contains parts of the base name
+                                        baseName.Split('_').Any(part => archetypeName.Contains(part)))
                                     {
                                         ExtractRpfEntry(ytypEntry, streamDir);
                                         break;
@@ -180,44 +203,12 @@ namespace CodeWalker.Tools
                     }
 
                     // Find and extract collision files (YBN)
-                    // First try exact name match
-                    var ybnEntry = FindRpfEntry(baseName + ".ybn");
-                    if (ybnEntry != null)
-                    {
-                        ExtractRpfEntry(ybnEntry, streamDir);
-                    }
-                    else
-                    {
-                        // If no exact match, try finding YBNs that contain the base name
-                        var ybnEntries = FindAllRpfEntries(".ybn");
-                        foreach (var entry in ybnEntries)
-                        {
-                            if (entry.Name.Contains(baseName))
-                            {
-                                ExtractRpfEntry(entry, streamDir);
-                            }
-                        }
-                    }
+                    // Try multiple naming patterns for collision files
+                    ExtractYbnForModel(baseName, streamDir);
 
-                    // Find and extract YTD files
-                    // First check for exact name match
-                    var ytdEntry = FindRpfEntry(baseName + ".ytd");
-                    if (ytdEntry != null)
-                    {
-                        ExtractRpfEntry(ytdEntry, streamDir);
-                    }
-
-                    // Then check shared texture dictionaries
-                    var sharedYtds = new[] { "vehshare.ytd", "generic.ytd", "generic_textures.ytd" };
-                    foreach (var sharedYtd in sharedYtds)
-                    {
-                        var sharedEntry = FindRpfEntry(sharedYtd);
-                        if (sharedEntry != null)
-                        {
-                            ExtractRpfEntry(sharedEntry, streamDir);
-                        }
-                    }
-
+                    // Try variations of the model name for texture dictionaries
+                    var nameVariations = new List<string>(discoveredTextureNames);
+                    
                     // Extract YMAPs that reference this model
                     var allYmaps = FindAllRpfEntries(".ymap");
                     foreach (var ymapEntry in allYmaps)
@@ -229,9 +220,10 @@ namespace CodeWalker.Tools
                             {
                                 bool containsModel = false;
 
-                                // Check for exact matches
+                                // Check for exact matches and variations
                                 containsModel = ymapFile.AllEntities.Any(e => 
-                                    e._CEntityDef.archetypeName.Hash == JenkHash.GenHash(baseName));
+                                    e._CEntityDef.archetypeName.Hash == JenkHash.GenHash(baseName) ||
+                                    nameVariations.Any(v => e._CEntityDef.archetypeName.Hash == JenkHash.GenHash(v)));
 
                                 // Also check for LOD variants
                                 if (!containsModel)
@@ -267,6 +259,78 @@ namespace CodeWalker.Tools
             }
         }
 
+        // Add texture name variations to search for
+        private void AddTextureNameVariations(string baseName, HashSet<string> variations)
+        {
+            // Basic variations
+            variations.Add(baseName + "_hi");
+            variations.Add(baseName + "_veh");
+            variations.Add(baseName + "_1");
+            variations.Add(baseName + "_2");
+            variations.Add("v_" + baseName);
+            variations.Add("hei_" + baseName);
+            variations.Add("prop_" + baseName);
+            variations.Add(baseName + "_diff");
+            variations.Add(baseName + "_n");
+            variations.Add(baseName + "_spec");
+            variations.Add(baseName + "_detail");
+            variations.Add(baseName + "_bump");
+            variations.Add(baseName + "_normal");
+            variations.Add(baseName.Replace("_", ""));
+
+            // If baseName contains "_", try both parts separately and with common prefixes/suffixes
+            if (baseName.Contains("_"))
+            {
+                var parts = baseName.Split('_');
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (!string.IsNullOrWhiteSpace(parts[i]))
+                    {
+                        variations.Add(parts[i]);
+                        variations.Add(parts[i] + "_hi");
+                        variations.Add(parts[i] + "_diff");
+                        variations.Add(parts[i] + "_n");
+                        
+                        // Also try common prefixes
+                        variations.Add("v_" + parts[i]);
+                        variations.Add("prop_" + parts[i]);
+                        variations.Add("veh_" + parts[i]);
+                    }
+                }
+            }
+        }
+
+        // Extract all shared texture dictionaries that might contain needed textures
+        private void ExtractSharedTextureDictionaries(string streamDir)
+        {
+            var sharedYtds = new[] {
+                "vehshare.ytd",
+                "vehshare_truck.ytd",
+                "generic.ytd", 
+                "generic_textures.ytd",
+                "vehicle_generic.ytd",
+                "vehicle_decals.ytd",
+                "vehicle_misc.ytd",
+                "props.ytd",
+                "props_textures.ytd",
+                "cutscene_textures.ytd",
+                "cs_global.ytd",
+                "civilian_textures.ytd",
+                "item_textures.ytd",
+                "shared_textures.ytd",
+                "common.ytd"
+            };
+
+            foreach (var sharedYtdName in sharedYtds)
+            {
+                var sharedEntry = FindRpfEntry(sharedYtdName);
+                if (sharedEntry != null)
+                {
+                    ExtractRpfEntry(sharedEntry, streamDir);
+                }
+            }
+        }
+
         private void ExtractYftDependencies(RpfEntry item, string streamDir, HashSet<uint> processedTextures)
         {
             try
@@ -274,17 +338,36 @@ namespace CodeWalker.Tools
                 var yftFile = RpfFile.GetFile<YftFile>(item);
                 if (yftFile?.Fragment?.Drawable != null)
                 {
+                    // Track discovered texture names
+                    var discoveredTextureNames = new HashSet<string>();
+                    string baseName = Path.GetFileNameWithoutExtension(item.Path).ToLowerInvariant();
+                    
+                    // Add the base name as a potential texture name
+                    discoveredTextureNames.Add(baseName);
+
                     // Extract embedded textures if any
                     if (yftFile.Fragment.Drawable.ShaderGroup?.TextureDictionary != null)
                     {
-                        SafeExtractTextureDictionary(yftFile.Fragment.Drawable.ShaderGroup.TextureDictionary, streamDir, processedTextures);
+                        SafeExtractTextureDictionary(yftFile.Fragment.Drawable.ShaderGroup.TextureDictionary, streamDir, processedTextures, discoveredTextureNames);
                     }
 
                     // Extract shader-referenced textures
                     if (yftFile.Fragment.Drawable.ShaderGroup != null)
                     {
-                        SafeExtractShaderTextures(yftFile.Fragment.Drawable.ShaderGroup, streamDir, processedTextures);
+                        SafeExtractShaderTextures(yftFile.Fragment.Drawable.ShaderGroup, streamDir, processedTextures, discoveredTextureNames);
                     }
+
+                    // Add name variations
+                    AddTextureNameVariations(baseName, discoveredTextureNames);
+
+                    // Find and extract YTD files for all discovered texture names
+                    foreach (var textureName in discoveredTextureNames)
+                    {
+                        ExtractYtdForModel(textureName, streamDir);
+                    }
+
+                    // Extract shared texture dictionaries
+                    ExtractSharedTextureDictionaries(streamDir);
                 }
             }
             catch (Exception ex)
@@ -293,7 +376,7 @@ namespace CodeWalker.Tools
             }
         }
 
-        private void SafeExtractShaderTextures(ShaderGroup shaderGroup, string outputDir, HashSet<uint> processedTextures)
+        private void SafeExtractShaderTextures(ShaderGroup shaderGroup, string outputDir, HashSet<uint> processedTextures, HashSet<string> discoveredTextureNames = null)
         {
             if (shaderGroup?.Shaders?.data_items == null) return;
 
@@ -309,10 +392,20 @@ namespace CodeWalker.Tools
                         {
                             if (param?.Data is TextureBase texBase)
                             {
+                                // Record texture name for later searching
+                                if (discoveredTextureNames != null && texBase.Name != null)
+                                {
+                                    string texName = texBase.Name.ToString().ToLowerInvariant();
+                                    if (!string.IsNullOrWhiteSpace(texName))
+                                    {
+                                        discoveredTextureNames.Add(texName);
+                                    }
+                                }
+
                                 var texture = FindTexture(texBase.NameHash);
                                 if (texture != null)
                                 {
-                                    SafeExtractTexture(texture, outputDir, processedTextures);
+                                    SafeExtractTexture(texture, outputDir, processedTextures, discoveredTextureNames);
                                 }
                             }
                         }
@@ -323,7 +416,7 @@ namespace CodeWalker.Tools
             }
         }
 
-        private void SafeExtractTextureDictionary(TextureDictionary textureDict, string outputDir, HashSet<uint> processedTextures)
+        private void SafeExtractTextureDictionary(TextureDictionary textureDict, string outputDir, HashSet<uint> processedTextures, HashSet<string> discoveredTextureNames = null)
         {
             if (textureDict?.Textures?.data_items == null) return;
 
@@ -333,19 +426,39 @@ namespace CodeWalker.Tools
                 {
                     if (texture != null)
                     {
-                        SafeExtractTexture(texture, outputDir, processedTextures);
+                        // Record texture name for later searching
+                        if (discoveredTextureNames != null && texture.Name != null)
+                        {
+                            string texName = texture.Name.ToString().ToLowerInvariant();
+                            if (!string.IsNullOrWhiteSpace(texName))
+                            {
+                                discoveredTextureNames.Add(texName);
+                            }
+                        }
+
+                        SafeExtractTexture(texture, outputDir, processedTextures, discoveredTextureNames);
                     }
                 }
                 catch (Exception) { /* Skip problematic texture */ }
             }
         }
 
-        private void SafeExtractTexture(Texture texture, string outputDir, HashSet<uint> processedTextures)
+        private void SafeExtractTexture(Texture texture, string outputDir, HashSet<uint> processedTextures, HashSet<string> discoveredTextureNames = null)
         {
             if (texture == null || processedTextures.Contains(texture.NameHash)) return;
 
             try
             {
+                // Record texture name for later searching
+                if (discoveredTextureNames != null && texture.Name != null)
+                {
+                    string texName = texture.Name.ToString().ToLowerInvariant();
+                    if (!string.IsNullOrWhiteSpace(texName))
+                    {
+                        discoveredTextureNames.Add(texName);
+                    }
+                }
+
                 string texturePath = GetTexturePath(texture.NameHash);
                 if (string.IsNullOrEmpty(texturePath)) return;
 
@@ -366,6 +479,15 @@ namespace CodeWalker.Tools
                             File.WriteAllBytes(textureOutputPath, textureData);
                             processedTextures.Add(texture.NameHash);
                         }
+                    }
+
+                    // Also extract the YTD that contains this texture
+                    string ytdPath = Path.GetDirectoryName(textureFileEntry.Path) + "\\" + 
+                                     Path.GetFileNameWithoutExtension(textureFileEntry.Path) + ".ytd";
+                    var ytdEntry = rpfManager.GetEntry(ytdPath) as RpfFileEntry;
+                    if (ytdEntry != null)
+                    {
+                        ExtractRpfEntry(ytdEntry, outputDir);
                     }
                 }
             }
@@ -471,39 +593,26 @@ namespace CodeWalker.Tools
                 return path;
             }
 
-            // Search in all RPF files for the texture
             foreach (var rpf in rpfManager.AllRpfs)
             {
                 foreach (var entry in rpf.AllEntries)
                 {
                     if (entry is RpfFileEntry rfe && rfe.Name.EndsWith(".ytd", StringComparison.OrdinalIgnoreCase))
                     {
-                        var dict = RpfFile.GetFile<YtdFile>(rfe);
-                        if (dict?.TextureDict?.TextureNameHashes?.data_items != null)
+                        try
                         {
-                            if (dict.TextureDict.TextureNameHashes.data_items.Contains(hash))
+                            var dict = RpfFile.GetFile<YtdFile>(rfe);
+                            if (dict?.TextureDict?.TextureNameHashes?.data_items != null)
                             {
-                                path = rfe.Path;
-                                texturePathCache[hash] = path;
-                                return path;
+                                if (dict.TextureDict.TextureNameHashes.data_items.Contains(hash))
+                                {
+                                    path = rfe.Path;
+                                    texturePathCache[hash] = path;
+                                    return path;
+                                }
                             }
                         }
-                    }
-                }
-            }
-
-            // Check shared textures
-            var sharedYtd = rpfManager.GetEntry("vehshare.ytd") as RpfFileEntry;
-            if (sharedYtd != null)
-            {
-                var sharedDict = RpfFile.GetFile<YtdFile>(sharedYtd);
-                if (sharedDict?.TextureDict?.TextureNameHashes?.data_items != null)
-                {
-                    if (sharedDict.TextureDict.TextureNameHashes.data_items.Contains(hash))
-                    {
-                        path = sharedYtd.Path;
-                        texturePathCache[hash] = path;
-                        return path;
+                        catch (Exception) { /* Skip problematic YTD */ }
                     }
                 }
             }
@@ -513,32 +622,23 @@ namespace CodeWalker.Tools
 
         private Texture FindTexture(uint hash)
         {
-            // Try to find the texture in any available dictionary
             foreach (var rpf in rpfManager.AllRpfs)
             {
                 foreach (var entry in rpf.AllEntries)
                 {
                     if (entry is RpfFileEntry rfe && rfe.Name.EndsWith(".ytd", StringComparison.OrdinalIgnoreCase))
                     {
-                        var dict = RpfFile.GetFile<YtdFile>(rfe);
-                        if (dict?.TextureDict != null)
+                        try
                         {
-                            var tex = dict.TextureDict.Lookup(hash);
-                            if (tex != null) return tex;
+                            var dict = RpfFile.GetFile<YtdFile>(rfe);
+                            if (dict?.TextureDict != null)
+                            {
+                                var tex = dict.TextureDict.Lookup(hash);
+                                if (tex != null) return tex;
+                            }
                         }
+                        catch (Exception) { /* Skip problematic YTD */ }
                     }
-                }
-            }
-
-            // Try to find the texture in shared dictionaries
-            var sharedYtd = rpfManager.GetEntry("vehshare.ytd") as RpfFileEntry;
-            if (sharedYtd != null)
-            {
-                var sharedDict = RpfFile.GetFile<YtdFile>(sharedYtd);
-                if (sharedDict?.TextureDict != null)
-                {
-                    var tex = sharedDict.TextureDict.Lookup(hash);
-                    if (tex != null) return tex;
                 }
             }
 
@@ -598,6 +698,209 @@ namespace CodeWalker.Tools
                 if (data != null && data.Length > 0)
                 {
                     File.WriteAllBytes(outputPath, data);
+                }
+            }
+        }
+
+        // Improve the YTD extraction to search more thoroughly
+        private void ExtractYtdForModel(string baseName, string streamDir)
+        {
+            if (string.IsNullOrWhiteSpace(baseName)) return;
+            
+            // First check for exact match with YTD extension
+            var ytdEntry = FindRpfEntry(baseName + ".ytd");
+            if (ytdEntry != null)
+            {
+                ExtractRpfEntry(ytdEntry, streamDir);
+            }
+
+            // Sometimes YTDs are in parent folders with the same name
+            var ytdParentEntry = FindRpfEntryWithParentName(baseName);
+            if (ytdParentEntry != null)
+            {
+                ExtractRpfEntry(ytdParentEntry, streamDir);
+            }
+
+            // Try texture variations
+            var variations = new[] {
+                baseName + "_diff.ytd",
+                baseName + "_1.ytd",
+                baseName + "_2.ytd",
+                baseName + "_hi.ytd",
+                baseName + "_lod.ytd",
+                baseName + "_n.ytd",
+                baseName + "_spec.ytd"
+            };
+
+            foreach (var variation in variations)
+            {
+                var entry = FindRpfEntry(variation);
+                if (entry != null)
+                {
+                    ExtractRpfEntry(entry, streamDir);
+                }
+            }
+
+            // Check prefixed variants
+            var prefixedVariants = new[] {
+                "v_" + baseName + ".ytd",
+                "veh_" + baseName + ".ytd",
+                "prop_" + baseName + ".ytd",
+                "hei_" + baseName + ".ytd"
+            };
+
+            foreach (var variant in prefixedVariants)
+            {
+                var entry = FindRpfEntry(variant);
+                if (entry != null)
+                {
+                    ExtractRpfEntry(entry, streamDir);
+                }
+            }
+
+            // Check texture dictionaries that might contain this texture
+            var allYtds = FindAllRpfEntries(".ytd");
+            foreach (var entry in allYtds)
+            {
+                try
+                {
+                    var ytdFile = RpfFile.GetFile<YtdFile>(entry);
+                    if (ytdFile?.TextureDict?.Textures?.data_items != null)
+                    {
+                        bool containsTexture = false;
+                        foreach (var texture in ytdFile.TextureDict.Textures.data_items)
+                        {
+                            string texName = texture?.Name?.ToString()?.ToLowerInvariant() ?? "";
+                            if (!string.IsNullOrEmpty(texName) && 
+                                (texName.Contains(baseName) || baseName.Contains(texName) || 
+                                 LevenshteinDistance(texName, baseName) <= 3))  // Allow for minor differences
+                            {
+                                containsTexture = true;
+                                break;
+                            }
+                        }
+
+                        if (containsTexture)
+                        {
+                            ExtractRpfEntry(entry, streamDir);
+                        }
+                    }
+                }
+                catch (Exception) { /* Skip problematic YTD */ }
+            }
+        }
+
+        // Find RpfEntry where the parent folder name matches the search term
+        private RpfFileEntry FindRpfEntryWithParentName(string folderName)
+        {
+            foreach (var rpf in rpfManager.AllRpfs)
+            {
+                foreach (var entry in rpf.AllEntries)
+                {
+                    if (entry is RpfFileEntry rfe && rfe.Name.EndsWith(".ytd", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string[] pathParts = rfe.Path.Split('\\', '/');
+                        if (pathParts.Length >= 2)
+                        {
+                            string parentDir = pathParts[pathParts.Length - 2].ToLowerInvariant();
+                            if (parentDir.Equals(folderName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                return rfe;
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Calculate Levenshtein distance between two strings to find close matches
+        private int LevenshteinDistance(string s, string t)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return string.IsNullOrEmpty(t) ? 0 : t.Length;
+            }
+
+            if (string.IsNullOrEmpty(t))
+            {
+                return s.Length;
+            }
+
+            int[] v0 = new int[t.Length + 1];
+            int[] v1 = new int[t.Length + 1];
+
+            for (int i = 0; i < v0.Length; i++)
+            {
+                v0[i] = i;
+            }
+
+            for (int i = 0; i < s.Length; i++)
+            {
+                v1[0] = i + 1;
+
+                for (int j = 0; j < t.Length; j++)
+                {
+                    int cost = (s[i] == t[j]) ? 0 : 1;
+                    v1[j + 1] = Math.Min(Math.Min(v1[j] + 1, v0[j + 1] + 1), v0[j] + cost);
+                }
+
+                for (int j = 0; j < v0.Length; j++)
+                {
+                    v0[j] = v1[j];
+                }
+            }
+
+            return v1[t.Length];
+        }
+
+        // Helper method to extract YBN files with various naming patterns
+        private void ExtractYbnForModel(string baseName, string streamDir)
+        {
+            // Try exact name match first
+            var ybnEntry = FindRpfEntry(baseName + ".ybn");
+            if (ybnEntry != null)
+            {
+                ExtractRpfEntry(ybnEntry, streamDir);
+                return;
+            }
+
+            // Try hi/lo variants
+            var hiEntry = FindRpfEntry(baseName + "_hi.ybn");
+            if (hiEntry != null)
+            {
+                ExtractRpfEntry(hiEntry, streamDir);
+            }
+
+            var loEntry = FindRpfEntry(baseName + "_lod.ybn");
+            if (loEntry != null)
+            {
+                ExtractRpfEntry(loEntry, streamDir);
+            }
+
+            // Try with different prefix/suffix patterns
+            var patterns = new[] {
+                "hi_" + baseName + ".ybn",
+                "lo_" + baseName + ".ybn",
+                baseName.Replace("_", "") + ".ybn"
+            };
+
+            foreach (var pattern in patterns)
+            {
+                var entry = FindRpfEntry(pattern);
+                if (entry != null)
+                {
+                    ExtractRpfEntry(entry, streamDir);
+                }
+            }
+
+            // Try substring matches if nothing found yet
+            var ybnEntries = FindAllRpfEntries(".ybn");
+            foreach (var entry in ybnEntries)
+            {
+                if (entry.Name.Contains(baseName) || baseName.Contains(entry.Name.Replace(".ybn", "")))
+                {
+                    ExtractRpfEntry(entry, streamDir);
                 }
             }
         }
