@@ -143,6 +143,8 @@ namespace CodeWalker.Tools
                 var ydrFile = RpfFile.GetFile<YdrFile>(item);
                 if (ydrFile?.Drawable != null)
                 {
+                    string baseName = Path.GetFileNameWithoutExtension(item.Path).ToLowerInvariant();
+
                     // Extract embedded textures if any
                     if (ydrFile.Drawable.ShaderGroup?.TextureDictionary != null)
                     {
@@ -153,6 +155,109 @@ namespace CodeWalker.Tools
                     if (ydrFile.Drawable.ShaderGroup != null)
                     {
                         SafeExtractShaderTextures(ydrFile.Drawable.ShaderGroup, streamDir, processedTextures);
+                    }
+
+                    // Find and extract all related YTYPs (they might be in shared files)
+                    var allYtyps = FindAllRpfEntries(".ytyp");
+                    foreach (var ytypEntry in allYtyps)
+                    {
+                        try
+                        {
+                            var ytypFile = RpfFile.GetFile<YtypFile>(ytypEntry);
+                            if (ytypFile?.AllArchetypes != null)
+                            {
+                                foreach (var archetype in ytypFile.AllArchetypes)
+                                {
+                                    if (archetype.Name.ToString().Equals(baseName, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        ExtractRpfEntry(ytypEntry, streamDir);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception) { /* Skip problematic YTYP */ }
+                    }
+
+                    // Find and extract collision files (YBN)
+                    // First try exact name match
+                    var ybnEntry = FindRpfEntry(baseName + ".ybn");
+                    if (ybnEntry != null)
+                    {
+                        ExtractRpfEntry(ybnEntry, streamDir);
+                    }
+                    else
+                    {
+                        // If no exact match, try finding YBNs that contain the base name
+                        var ybnEntries = FindAllRpfEntries(".ybn");
+                        foreach (var entry in ybnEntries)
+                        {
+                            if (entry.Name.Contains(baseName))
+                            {
+                                ExtractRpfEntry(entry, streamDir);
+                            }
+                        }
+                    }
+
+                    // Find and extract YTD files
+                    // First check for exact name match
+                    var ytdEntry = FindRpfEntry(baseName + ".ytd");
+                    if (ytdEntry != null)
+                    {
+                        ExtractRpfEntry(ytdEntry, streamDir);
+                    }
+
+                    // Then check shared texture dictionaries
+                    var sharedYtds = new[] { "vehshare.ytd", "generic.ytd", "generic_textures.ytd" };
+                    foreach (var sharedYtd in sharedYtds)
+                    {
+                        var sharedEntry = FindRpfEntry(sharedYtd);
+                        if (sharedEntry != null)
+                        {
+                            ExtractRpfEntry(sharedEntry, streamDir);
+                        }
+                    }
+
+                    // Extract YMAPs that reference this model
+                    var allYmaps = FindAllRpfEntries(".ymap");
+                    foreach (var ymapEntry in allYmaps)
+                    {
+                        try
+                        {
+                            var ymapFile = RpfFile.GetFile<YmapFile>(ymapEntry);
+                            if (ymapFile?.AllEntities != null)
+                            {
+                                bool containsModel = false;
+
+                                // Check for exact matches
+                                containsModel = ymapFile.AllEntities.Any(e => 
+                                    e._CEntityDef.archetypeName.Hash == JenkHash.GenHash(baseName));
+
+                                // Also check for LOD variants
+                                if (!containsModel)
+                                {
+                                    var lodVariants = new[]
+                                    {
+                                        baseName + "_lod",
+                                        baseName + "_loda",
+                                        baseName + "_lodb",
+                                        baseName + "_slod1",
+                                        baseName + "_slod2",
+                                        baseName + "_slod3",
+                                        baseName + "_slod4"
+                                    };
+
+                                    containsModel = ymapFile.AllEntities.Any(e =>
+                                        lodVariants.Any(lod => e._CEntityDef.archetypeName.Hash == JenkHash.GenHash(lod)));
+                                }
+
+                                if (containsModel)
+                                {
+                                    ExtractRpfEntry(ymapEntry, streamDir);
+                                }
+                            }
+                        }
+                        catch (Exception) { /* Skip problematic YMAP */ }
                     }
                 }
             }
@@ -280,23 +385,81 @@ namespace CodeWalker.Tools
                 writer.WriteLine();
                 writer.WriteLine("files {");
                 writer.WriteLine("    'stream/*.ydr',");
+                writer.WriteLine("    'stream/*.yft',");
+                writer.WriteLine("    'stream/*.ytd',");
+                writer.WriteLine("    'stream/*.ybn',");
+                writer.WriteLine("    'stream/*.ytyp',");
+                writer.WriteLine("    'stream/*.ymap',");
                 writer.WriteLine("    'stream/*_lod.ydr',");
                 writer.WriteLine("    'stream/*_loda.ydr',");
                 writer.WriteLine("    'stream/*_lodb.ydr',");
-                writer.WriteLine("    'stream/*.yft',");
-                writer.WriteLine("    'stream/*.ytd',");
-                writer.WriteLine("    'stream/*.ybn'");
+                writer.WriteLine("    'stream/*.ydd'");
                 writer.WriteLine("}");
                 writer.WriteLine();
-                // Add appropriate data_file directives based on file types
+
+                // Add data_file directives based on file types present
+                var fileTypes = selectedItems.Select(item => Path.GetExtension(item.Path).ToLowerInvariant())
+                                          .Distinct()
+                                          .ToList();
+
+                // Always include YTYP since it's critical for model registration
                 writer.WriteLine("data_file 'DLC_ITYP_REQUEST' 'stream/*.ytyp'");
-                writer.WriteLine("data_file 'HANDLING_FILE' 'stream/*.meta'");
-                
-                // Check if we have any .yft files (typically for vehicles)
-                bool hasYft = selectedItems.Any(item => item.Path.EndsWith(".yft", StringComparison.OrdinalIgnoreCase));
-                if (hasYft)
+
+                if (fileTypes.Contains(".yft"))
                 {
                     writer.WriteLine("data_file 'VEHICLE_FILE' 'stream/*.yft'");
+                }
+
+                if (fileTypes.Contains(".ymap"))
+                {
+                    writer.WriteLine("data_file 'DLC_YMAP_REQUEST' 'stream/*.ymap'");
+                }
+
+                if (fileTypes.Contains(".ydd"))
+                {
+                    writer.WriteLine("data_file 'DLC_ITYP_REQUEST' 'stream/*.ydd'");
+                }
+
+                // Add client script to handle dynamic loading if needed
+                bool needsDynamicLoading = fileTypes.Any(ext => ext == ".yft" || ext == ".ymap");
+                if (needsDynamicLoading)
+                {
+                    writer.WriteLine();
+                    writer.WriteLine("client_script 'client.lua'");
+                    
+                    // Create client.lua
+                    string clientLuaPath = Path.Combine(outputDir, "client.lua");
+                    using (var luaWriter = new StreamWriter(clientLuaPath))
+                    {
+                        luaWriter.WriteLine("-- Automatically load all resource assets");
+                        luaWriter.WriteLine("Citizen.CreateThread(function()");
+                        luaWriter.WriteLine("    local resourceName = GetCurrentResourceName()");
+                        luaWriter.WriteLine();
+                        luaWriter.WriteLine("    -- Load all YTYPs");
+                        luaWriter.WriteLine("    local ytypFiles = { 'stream/*.ytyp' }");
+                        luaWriter.WriteLine("    for _, ytypPattern in ipairs(ytypFiles) do");
+                        luaWriter.WriteLine("        local files = GetStreamingFileForType(ytypPattern)");
+                        luaWriter.WriteLine("        for _, file in ipairs(files) do");
+                        luaWriter.WriteLine("            local success = RequestIpl(file)");
+                        luaWriter.WriteLine("            if not success then");
+                        luaWriter.WriteLine("                print('^1Failed to load YTYP: ' .. file .. '^7')");
+                        luaWriter.WriteLine("            end");
+                        luaWriter.WriteLine("        end");
+                        luaWriter.WriteLine("    end");
+                        luaWriter.WriteLine();
+                        luaWriter.WriteLine("    -- Load all YMAPs");
+                        luaWriter.WriteLine("    local ymapFiles = { 'stream/*.ymap' }");
+                        luaWriter.WriteLine("    for _, ymapPattern in ipairs(ymapFiles) do");
+                        luaWriter.WriteLine("        local files = GetStreamingFileForType(ymapPattern)");
+                        luaWriter.WriteLine("        for _, file in ipairs(files) do");
+                        luaWriter.WriteLine("            local success = RequestIpl(file)");
+                        luaWriter.WriteLine("            if not success then");
+                        luaWriter.WriteLine("                print('^1Failed to load YMAP: ' .. file .. '^7')");
+                        luaWriter.WriteLine("            end");
+                        luaWriter.WriteLine("        end");
+                        luaWriter.WriteLine("    end");
+                        luaWriter.WriteLine("end)");
+                    }
                 }
             }
         }
@@ -380,6 +543,63 @@ namespace CodeWalker.Tools
             }
 
             return null;
+        }
+
+        private RpfFileEntry FindRpfEntry(string searchName, bool exactMatch = true)
+        {
+            foreach (var rpf in rpfManager.AllRpfs)
+            {
+                foreach (var entry in rpf.AllEntries)
+                {
+                    if (entry is RpfFileEntry rfe)
+                    {
+                        if (exactMatch)
+                        {
+                            if (rfe.Name.Equals(searchName, StringComparison.OrdinalIgnoreCase))
+                                return rfe;
+                        }
+                        else
+                        {
+                            if (rfe.Name.Contains(searchName))
+                                return rfe;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        private List<RpfFileEntry> FindAllRpfEntries(string extension)
+        {
+            var results = new List<RpfFileEntry>();
+            foreach (var rpf in rpfManager.AllRpfs)
+            {
+                foreach (var entry in rpf.AllEntries)
+                {
+                    if (entry is RpfFileEntry rfe && rfe.Name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                    {
+                        results.Add(rfe);
+                    }
+                }
+            }
+            return results;
+        }
+
+        private void ExtractRpfEntry(RpfFileEntry entry, string outputDir)
+        {
+            if (entry == null) return;
+
+            string fileName = Path.GetFileName(entry.Path);
+            string outputPath = Path.Combine(outputDir, fileName);
+
+            if (!File.Exists(outputPath))
+            {
+                byte[] data = entry.File.ExtractFile(entry);
+                if (data != null && data.Length > 0)
+                {
+                    File.WriteAllBytes(outputPath, data);
+                }
+            }
         }
     }
 } 
